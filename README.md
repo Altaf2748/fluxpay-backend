@@ -1,207 +1,424 @@
-# Authentication System (Face + Voice + Optional STT) — Privacy-Safe Repo
+# FluxPay e-KYC Backend
+### Multi-Modal Face + Voice Identity Verification Server
 
-A practical authentication workflow that can combine:
-- **Face verification** (InsightFace embeddings)
-- **Speaker verification** (SpeechBrain speaker embeddings)
-- **Optional** offline speech-to-text (STT) for capturing a name using **Vosk**
-
-This repository is published in a **privacy-safe** way: the project structure is complete, but any sensitive datasets/logs/identities were removed or replaced with placeholders.
+Built with **InsightFace** (ArcFace buffalo_l) + **SpeechBrain ECAPA-TDNN** + **FastAPI**.  
+Powers real-time biometric verification for the FluxPay payment wallet.
 
 ---
 
-## Demo Run (How we run the full system)
-We typically run the complete system using:
+## What This Does
 
-```bash
-python run_system.py --stt_name --vosk_model vosk-model-small-en-us-0.15 --name_seconds 6 --cooldown 10 --pc_ui_lang en
-````
+This server accepts a face image and voice recording, extracts biometric embeddings from both, fuses the scores using a weighted algorithm, and returns an `ACCEPT` or `REJECT` decision. It is called automatically by the FluxPay frontend during:
 
-### What these flags mean
-
-* `--stt_name`
-  Enables offline speech-to-text for capturing/confirming a spoken name.
-* `--vosk_model <folder>`
-  Path (or folder name) of the Vosk model directory.
-* `--name_seconds 6`
-  How many seconds to listen for the name.
-* `--cooldown 10`
-  Cooldown time between attempts (helps avoid repeated triggers).
-* `--pc_ui_lang en`
-  UI / prompts language on PC side.
-
----
-
-## Key Features
-
-* ✅ Multi-factor verification (Face + Voice) with fusion
-* ✅ Offline STT option (Vosk) for name capture
-* ✅ Privacy-safe dataset/DB templates included (no real user data)
-* ✅ Prompt assets for PC UI language selection (AR/EN)
-* ✅ Modular scripts for building databases and running the pipeline
-
----
-
-## Privacy & Data Handling Notes (Important)
-
-This repo intentionally excludes any private or identifying data.
-
-**What you will notice (and why it’s normal):**
-
-* `dataset/` exists as **structure only** (no images/audio are shipped).
-* `db/teachers.json` and `db/pending.json` are included as **templates/placeholders** to show the expected schema.
-* `logs/attempts.jsonl` is **empty**.
-
-> **Why are some files “empty”?**
-> Because publishing real images, recordings, teacher identities, or attempt logs would violate privacy.
-> This repository is meant to be safe to share while still being understandable and runnable once you provide your own data.
-
----
-
-## Project Structure (high level)
-
-```text
-.
-├─ run_system.py              # Main runner (full system)
-├─ main.py                    # FastAPI server (if used by your flow)
-├─ pc_client.py               # PC-side logic (STT + UI prompts)
-├─ verify_fusion.py           # Fusion logic (face + voice)
-├─ face_model_insightface.py  # Face embeddings using InsightFace
-├─ voice_model.py             # Speaker embeddings using SpeechBrain
-├─ db/
-│  ├─ teachers.json           # Template (placeholder)
-│  └─ pending.json            # Template (placeholder)
-├─ dataset/                   # Template only (no private media)
-├─ logs/
-│  └─ attempts.jsonl          # Empty placeholder
-└─ assets/prompts/            # Audio/text prompts (AR/EN)
-```
+- **User onboarding** — enrolls face + voice once at signup
+- **High-value payments** — verifies identity before any transaction above ₹1000
 
 ---
 
 ## Requirements
 
-* Python 3.9+ (recommended)
-* `numpy`, `requests`, `tqdm`
-* `opencv-python`
-* `torch`, `torchaudio`
-* `speechbrain`
-* `insightface`
-* `fastapi`, `uvicorn` (if you use `main.py`)
-* **Optional**: `vosk` (only needed if you use `--stt_name`)
+| Requirement | Version |
+|---|---|
+| Python | 3.10 exactly (not 3.11, not 3.12) |
+| pip | any recent version |
+| ffmpeg | must be installed and on PATH |
+| Windows | 10 or 11 (Developer Mode recommended) |
+| RAM | minimum 4GB free |
+| Disk | minimum 2GB free (models download on first run) |
+
+> **Python 3.10 is mandatory.** Other versions cause package conflicts with insightface and speechbrain.
 
 ---
 
-## Setup
+## Step 1 — Install Python 3.10
 
-### 1) Create a virtual environment (recommended)
+1. Go to: https://www.python.org/downloads/release/python-31011/
+2. Scroll down to **Files** → download **Windows installer (64-bit)**
+3. Run the installer
+4. **IMPORTANT:** Check the box **"Add Python to PATH"** before clicking Install
+5. Verify: open PowerShell and run:
+   ```
+   python --version
+   ```
+   Must show `Python 3.10.x`
 
-```bash
+---
+
+## Step 2 — Install ffmpeg
+
+ffmpeg is required for audio processing.
+
+1. Go to: https://www.gyan.dev/ffmpeg/builds/
+2. Download **ffmpeg-release-essentials.zip**
+3. Extract it to `C:\ffmpeg`
+4. Add to PATH:
+   - Press Windows key → search "Environment Variables" → open it
+   - Under System Variables → find **Path** → click Edit
+   - Click New → type `C:\ffmpeg\bin`
+   - Click OK on all windows
+5. Verify: open a NEW PowerShell window and run:
+   ```
+   ffmpeg -version
+   ```
+   Must show version info, not an error
+
+---
+
+## Step 3 — Enable Windows Developer Mode
+
+This is required for model downloading to work correctly.
+
+1. Press Windows key → search **"Developer settings"** → open it
+2. Toggle **Developer Mode → ON**
+3. Click Yes on the confirmation dialog
+4. You do not need to restart
+
+---
+
+## Step 4 — Clone the Repository
+
+```
+git clone https://github.com/Altaf2748/fluxpay-backend.git
+cd fluxpay-backend
+```
+
+---
+
+## Step 5 — Create Virtual Environment
+
+```
 python -m venv .venv
-# Windows:
+```
+
+Activate it — run this every time you open a new terminal:
+
+```
+# Windows PowerShell:
 .venv\Scripts\activate
-# macOS/Linux:
+
+# Windows Command Prompt:
+.venv\Scripts\activate.bat
+
+# Mac / Linux:
 source .venv/bin/activate
 ```
 
-### 2) Install dependencies (typical)
+You must see `(.venv)` at the start of your prompt before continuing.
 
-```bash
+---
+
+## Step 6 — Install Dependencies
+
+Run these commands one by one. Do not skip any.
+
+```
 pip install -U pip
-pip install numpy requests tqdm opencv-python
-pip install torch torchaudio
-pip install speechbrain insightface
-pip install fastapi uvicorn
-# Optional (only if using STT):
-pip install vosk
 ```
 
-> Note: Torch/torchaudio installation can vary by OS/GPU.
-> If you face install issues, prefer CPU-only builds or install from the official PyTorch instructions.
+```
+pip install numpy<2
+```
+
+```
+pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cpu
+```
+
+```
+pip install speechbrain==1.0.0
+```
+
+```
+pip install insightface onnxruntime
+```
+
+```
+pip install fastapi uvicorn python-multipart
+```
+
+```
+pip install opencv-python requests tqdm soundfile
+```
+
+```
+pip install huggingface_hub==0.23.4
+```
+
+> **Why specific versions?**  
+> `numpy<2` — insightface and speechbrain were compiled against NumPy 1.x  
+> `torch==2.1.2` — must match torchaudio exactly  
+> `speechbrain==1.0.0` — older versions don't have `speechbrain.inference`  
+> `huggingface_hub==0.23.4` — newer versions break the model download API
 
 ---
 
-## Vosk Model (Not Included)
+## Step 7 — Verify Installation
 
-### Why the Vosk model folder is not in this repo
+Run this to confirm all packages loaded correctly:
 
-A folder like `vosk-model-small-en-us-0.15` is an external pre-trained model downloaded from a third-party source.
-To avoid licensing/ownership issues (and reduce repo size), **the model is not committed** here.
-
-### How to use Vosk with this project
-
-1. Download any compatible Vosk model (English or other language).
-2. Place the model folder inside the project directory, for example:
-
-```text
-Authentication-System/
-└─ vosk-model-small-en-us-0.15/
+```
+python -c "import insightface, speechbrain, fastapi; print('All packages OK')"
 ```
 
-### If your model has a different folder name
-
-No problem — just pass its name/path via `--vosk_model`:
-
-```bash
-python run_system.py --stt_name --vosk_model vosk-model-small-en-us-0.22 --name_seconds 6 --cooldown 10 --pc_ui_lang en
+Expected output:
+```
+All packages OK
 ```
 
-> Alternatively, you can change the default in the code where the argument is defined
-> (search for `--vosk_model` in `run_system.py`).
+If you see warnings about torchaudio backend or torchvision — those are harmless, ignore them.
+
+If you see any `ModuleNotFoundError` or `ImportError` — go to the Troubleshooting section at the bottom.
 
 ---
 
-## Running the Full System
+## Step 8 — Set Up the Database Files
 
-From the project root:
+The database files must exist and contain valid JSON before starting the server.
 
-```bash
-python run_system.py --stt_name --vosk_model vosk-model-small-en-us-0.15 --name_seconds 6 --cooldown 10 --pc_ui_lang en
+```
+[System.IO.File]::WriteAllText("db\teachers.json", '{"version": 1, "teachers": []}')
 ```
 
-### Example variations
-
-* Run without STT (if supported by your setup):
-
-```bash
-python run_system.py --vosk_model vosk-model-small-en-us-0.15 --cooldown 10 --pc_ui_lang en
+```
+[System.IO.File]::WriteAllText("db\pending.json", '{"version": 1, "pending": []}')
 ```
 
-* Switch UI language (if you have prompts for Arabic):
+```
+New-Item -ItemType Directory -Force -Path logs | Out-Null
+New-Item -ItemType File -Force -Path logs\attempts.jsonl | Out-Null
+```
 
-```bash
-python run_system.py --stt_name --vosk_model vosk-model-small-en-us-0.15 --name_seconds 6 --cooldown 10 --pc_ui_lang ar
+> **Why not use `echo` or `Out-File`?**  
+> PowerShell's `Out-File` and `echo` add a BOM (Byte Order Mark) to the file which breaks Python's JSON parser. `WriteAllText` writes clean UTF-8 without BOM.
+
+---
+
+## Step 9 — Start the Server
+
+```
+python main.py
+```
+
+**First run only:** The server will automatically download two AI models:
+- InsightFace buffalo_l (~250MB) — face recognition
+- SpeechBrain ECAPA-TDNN (~90MB) — voice recognition
+
+This takes 3-5 minutes depending on internet speed. Subsequent starts are instant.
+
+**Expected output when ready:**
+```
+Loading AI Models...
+find model: ...buffalo_l\w600k_r50.onnx recognition...
+Models Loaded Successfully.
+INFO:     Uvicorn running on http://0.0.0.0:8000
 ```
 
 ---
 
-## What you need to provide (because this repo is privacy-safe)
+## Step 10 — Confirm It's Working
 
-To actually enroll/verify identities you must provide your own data:
+Open a browser and go to:
+```
+http://localhost:8000/api/health
+```
 
-* Add your own images/audio into the expected `dataset/` structure.
-* Fill your local teacher/user list (CSV/JSON templates) with your own IDs.
-* Generate embeddings/databases according to the scripts you use in your workflow.
+Expected response:
+```json
+{"status":"ok","teachers":0,"version":"1.0"}
+```
+
+Also open the interactive API docs:
+```
+http://localhost:8000/docs
+```
+
+---
+
+## Configuration
+
+All settings are in `config.json`. The most important ones:
+
+```json
+{
+  "thresholds": {
+    "face": 0.30,
+    "voice": 0.25,
+    "alpha": 0.6,
+    "require_both": true
+  }
+}
+```
+
+| Setting | Description | Recommended |
+|---|---|---|
+| `face` | Face similarity threshold (0-1) | 0.30 for testing, 0.46 for production |
+| `voice` | Voice similarity threshold (0-1) | 0.25 for testing, 0.40 for production |
+| `alpha` | Face weight in fusion (voice gets 1-alpha) | 0.6 |
+| `require_both` | Both face AND voice must match same person | true |
+
+> Start with low thresholds (0.30 / 0.25) during initial setup and testing. Increase to production values (0.46 / 0.40) once enrollment quality is confirmed good.
+
+---
+
+## API Endpoints
+
+### Health Check
+```
+GET /api/health
+```
+
+### Enroll a User
+```
+POST /api/register_teacher
+Content-Type: application/json
+
+{
+  "teacher_id": "user-uuid",
+  "name": "user@email.com",
+  "image": "base64-encoded-jpeg",
+  "audio": "base64-encoded-wav",
+  "robot_captured": false,
+  "pending_approval": false
+}
+```
+
+### Verify Identity (Fusion)
+```
+POST /api/verify_fusion
+Content-Type: application/json
+
+{
+  "image": "base64-encoded-jpeg",
+  "audio": "base64-encoded-wav",
+  "source": "fluxpay_web"
+}
+```
+
+Returns:
+```json
+{
+  "decision": "ACCEPT",
+  "face": { "score": 0.72, "recognized": true },
+  "voice": { "score": 0.61, "recognized": true },
+  "fusion": { "fused_score": 0.68 }
+}
+```
+
+### List Enrolled Users
+```
+GET /api/teachers
+```
+
+---
+
+## CORS Configuration
+
+The server allows requests from these origins by default:
+- `http://localhost:5173`
+- `http://localhost:8080`
+- `http://localhost:3000`
+- `http://127.0.0.1:8080`
+- `https://fluxpay-smart-flow.vercel.app`
+
+To add your own frontend URL, open `main.py` and add it to the `allow_origins` list in the `CORSMiddleware` block near the top of the file.
 
 ---
 
 ## Troubleshooting
 
-* **The system can’t find the Vosk model**
-  Make sure the folder exists and the path matches the `--vosk_model` value.
-* **Empty dataset / missing identities**
-  This repo ships without private media by design. Add your own data locally.
-* **Repeated triggers / too many attempts**
-  Increase `--cooldown` to reduce back-to-back attempts.
+### `ModuleNotFoundError: No module named 'speechbrain.inference'`
+```
+pip uninstall speechbrain -y
+pip install speechbrain==1.0.0
+```
+
+### `AttributeError: module 'torchaudio' has no attribute 'list_audio_backends'`
+```
+pip uninstall torch torchaudio speechbrain -y
+pip install torch==2.1.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cpu
+pip install speechbrain==1.0.0
+```
+
+### `TypeError: hf_hub_download() got an unexpected keyword argument 'use_auth_token'`
+```
+pip install huggingface_hub==0.23.4
+```
+
+### `OSError: [WinError 1314] A required privilege is not held by the client`
+Enable Windows Developer Mode (Step 3 above) then restart the terminal.
+
+### `json.decoder.JSONDecodeError: Unexpected UTF-8 BOM`
+Your db files were created with PowerShell Out-File which adds a BOM. Fix:
+```
+[System.IO.File]::WriteAllText("db\teachers.json", '{"version": 1, "teachers": []}')
+[System.IO.File]::WriteAllText("db\pending.json", '{"version": 1, "pending": []}')
+```
+
+### `json.decoder.JSONDecodeError: Extra data`
+Your db file has two JSON objects. Fix it with the same WriteAllText commands above.
+
+### `numpy: A module compiled with NumPy 1.x cannot run in NumPy 2.x`
+```
+pip install "numpy<2"
+```
+
+### `OPTIONS /api/verify_fusion HTTP/1.1" 400 Bad Request`
+Your frontend origin is not in the CORS allowed list. Add it to `allow_origins` in `main.py`.
+
+### `POST /api/register_teacher HTTP/1.1" 404 Not Found`
+The route exists. This usually means the request body is malformed. Check that image and audio are base64 strings without the `data:image/jpeg;base64,` prefix.
+
+### `face<thresh,voice<thresh` — verification always fails
+Two possible causes:
+1. User was never enrolled — check `GET /api/teachers` returns count > 0
+2. Thresholds too high — lower them in config.json to `face: 0.20, voice: 0.15` for testing
+
+### `Unable to connect to the remote server`
+The backend is not running. Start it with `python main.py` in a terminal that stays open.
 
 ---
 
-## Third-Party Models & Licensing
+## Daily Usage
 
-This repository contains project code and placeholder templates only.
-Third-party models (e.g., Vosk) are governed by their original licenses and must be obtained separately.
+Every time you use FluxPay:
+
+**Terminal 1 — keep open the entire session:**
+```
+cd path\to\fluxpay-backend
+.venv\Scripts\activate
+python main.py
+```
+
+**Terminal 2 — frontend:**
+```
+cd path\to\fluxpay-smart-flow
+npm run dev
+```
+
+The backend must be running at port 8000 whenever the frontend needs to enroll or verify a user.
 
 ---
 
-## Contact
+## Project Structure
 
-If you build on this project, feel free to open an issue or submit a pull request.
+```
+fluxpay-backend/
+├── main.py                    ← FastAPI server (all endpoints)
+├── verify_fusion.py           ← Face + voice fusion decision logic
+├── face_model_insightface.py  ← InsightFace ArcFace embeddings
+├── voice_model.py             ← SpeechBrain ECAPA-TDNN embeddings
+├── db_utils.py                ← JSON database read/write helpers
+├── server_utils.py            ← Logging, file locking, utilities
+├── config.json                ← All configuration and thresholds
+├── db/
+│   ├── teachers.json          ← Enrolled users (auto-managed)
+│   └── pending.json           ← Pending approvals (auto-managed)
+├── logs/
+│   └── attempts.jsonl         ← Audit log of every attempt
+└── pretrained_models/         ← Downloaded automatically on first run
+```
+
+---
+
+## Related Repository
+
+FluxPay Frontend: https://github.com/Altaf2748/fluxpay-smart-flow
