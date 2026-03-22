@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any, Tuple
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware 
 from pydantic import BaseModel, Field
 
 import torchaudio
@@ -27,6 +28,35 @@ APP_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = str(APP_DIR / "config.json")
 
 app = FastAPI(title="NAO Robot AI Backend Server", version="1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://localhost:3000",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:5173",
+        "https://fluxpay-smart-flow.vercel.app",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+from fastapi.responses import JSONResponse
+
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str, request: Request):
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
 
 def load_config(path: str = DEFAULT_CONFIG_PATH) -> Dict[str, Any]:
     cfg = read_json(path, default={})
@@ -734,8 +764,10 @@ async def register_teacher(payload: RegisterPayload, request: Request):
                 idx = index_teachers(db)
                 t = idx.get(teacher_id)
                 if t is None:
-                    raise HTTPException(status_code=404, detail=f"Teacher id '{teacher_id}' not found for direct update. Use pending_approval for new teacher.")
-                t = ensure_teacher(t, teacher_id, payload.name)
+                    # Teacher doesn't exist yet — create a new entry directly
+                    t = ensure_teacher({}, teacher_id, payload.name)
+                else:
+                    t = ensure_teacher(t, teacher_id, payload.name)
                 if face_emb is not None:
                     t["face_embeddings"].append(face_emb.astype(np.float32).tolist())
                     maxn = int(CFG["incremental"].get("max_face_embeddings", 50))
@@ -750,6 +782,7 @@ async def register_teacher(payload: RegisterPayload, request: Request):
                 t["meta"]["num_images_used"] = len(t["face_embeddings"])
                 t["meta"]["num_audios_used"] = len(t["voice_embeddings"])
                 t["meta"]["last_updated"] = now_iso()
+                t["meta"]["pending_approval"] = False
 
                 idx[teacher_id] = t
                 db = finalize_db(db, idx)
@@ -760,14 +793,14 @@ async def register_teacher(payload: RegisterPayload, request: Request):
 
             _append_attempt_log({
                 "request_id": rid,
-                "type": "update_existing",
+                "type": "register_or_update",
                 "source": "nao" if payload.robot_captured else "pc",
                 "ip": request.client.host if request.client else None,
                 "teacher_id": teacher_id,
                 "name": payload.name,
             })
 
-            return {"request_id": rid, "status": "UPDATED", "teacher_id": teacher_id, "name": payload.name}
+            return {"request_id": rid, "status": "ENROLLED", "teacher_id": teacher_id, "name": payload.name}
 
         pending_id = "P_" + uuid.uuid4().hex[:10]
         name_bytes = _b64_to_bytes(payload.name_audio,
